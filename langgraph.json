@@ -1,0 +1,9 @@
+{
+  "dependencies": [
+    "./pyproject.toml"
+  ],
+  "graphs": {
+    "agent": "src/alpha_digest/agent/graph.py:create_agent_graph"
+  },
+  "pip_installer": "uv"
+}

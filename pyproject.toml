@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "alpha_digest"
+version = "0.1.0"
+description = "A LangGraph AI agent for Stock Market Analysis"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # Core LangGraph ecosystem
+    "langgraph>=1.0.8",
+    "langgraph-api>=0.6.39",
+    "langgraph-cli>=0.4.11",
+    "langsmith>=0.5.2",
+
+    # Core LangChain components
+    "langchain-core>=1.2.5",
+    "langchain>=1.2.0",
+    "langchain-google-genai>=0.0.1",
+
+    "pydantic>=2.0",
+    "typing-extensions>=4.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0",
+    "isort>=5.0",
+    "mypy>=1.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["src/alpha_digest/tests"]
+
+[tool.isort]
+profile = "black"
+
+[tool.black]
+line-length = 88
