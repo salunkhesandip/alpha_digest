@@ -32,8 +32,10 @@ DEFAULT_TEMPERATURE = 0.7
 DEFAULT_ITEM_LIMIT = 20
 MAX_ITEM_LIMIT = 100
 
-# Chunking – max items per LLM call before we chunk-and-merge
-CHUNK_SIZE = 30
+# Chunking – max blocks per LLM call before we chunk-and-merge
+# Increased to 150: 132 blocks at ~578 chars avg ≈ 76K chars ≈ 20K tokens,
+# well within Gemini 2.5 Flash's 1M-token context window.
+CHUNK_SIZE = 150
 
 # Retry configuration
 MAX_RETRIES = 3

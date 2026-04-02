@@ -24,6 +24,15 @@ dependencies = [
     "typing-extensions>=4.0",
     "python-dotenv>=1.0.0",
     "requests>=2.31.0",
+
+    # Gmail OAuth
+    "google-api-python-client>=2.190.0",
+    "google-auth-httplib2>=0.2.0",
+    "google-auth-oauthlib>=1.2.0",
+
+    # Text-to-Speech & Telegram
+    "edge-tts>=7.0.0",
+    "python-telegram-bot>=20.0",
 ]
 
 [project.optional-dependencies]

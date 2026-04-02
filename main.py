@@ -37,6 +37,13 @@ async def main(tickers: Optional[str] = None) -> None:
 
     logger.info("RESULT:\n" + (result.get("summary") or "No summary generated."))
 
+    if result.get("email_status"):
+        logger.info(f"Email status: {result['email_status']}")
+    if result.get("telegram_status"):
+        logger.info(f"Telegram status: {result['telegram_status']}")
+    if result.get("audio_path"):
+        logger.info(f"Audio file: {result['audio_path']}")
+
     logger.info(f"Program ended at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
 

@@ -4,8 +4,9 @@ Nodes receive the full state dict and return **partial updates** (only the
 keys that changed).  LangGraph merges them back automatically.
 """
 
+import asyncio
 import os
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from langchain_core.messages import HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -21,7 +22,12 @@ from src.alpha_digest.config import (
 from src.alpha_digest.prompts import get_summary_prompt, get_chunk_merge_prompt
 from src.alpha_digest.states import AgentState
 from src.alpha_digest.tools import fetch_news_for_tickers, format_data_for_llm
-from src.alpha_digest.utils import get_api_key
+from src.alpha_digest.utils import (
+    get_api_key,
+    generate_summary_audio,
+    send_summary_email_oauth,
+    send_summary_to_telegram,
+)
 
 # ── Constants ──────────────────────────────────────────────────────────
 SEPARATOR_THRESHOLD = 10
@@ -31,6 +37,9 @@ RESP_DATA = "data"
 RESP_RAW_TEXT = "raw_text"
 RESP_SUMMARY = "summary"
 RESP_ERROR = "error"
+RESP_AUDIO_PATH = "audio_path"
+RESP_EMAIL_STATUS = "email_status"
+RESP_TELEGRAM_STATUS = "telegram_status"
 
 
 # ── Helper: LLM singleton ───────────────────────────────────────────────
@@ -106,8 +115,8 @@ def format_data_node(state: AgentState) -> dict:
         return {"error": f"Failed to format data: {e}"}
 
 
-def process_node(state: AgentState) -> dict:
-    """Summarize the news with LLM, with chunking for large inputs."""
+async def process_node(state: AgentState) -> dict:
+    """Summarize the news with LLM, with parallel chunking for very large inputs."""
     try:
         raw_text = state.get("raw_text")
         tickers = state.get("tickers", [])
@@ -118,7 +127,7 @@ def process_node(state: AgentState) -> dict:
 
         llm = _get_llm()
 
-        # ── Chunking: split long inputs into batches ─────────────────
+        # ── Split into article blocks ────────────────────────────────
         lines = raw_text.split("\n")
         blocks: list[str] = []
         current: list[str] = []
@@ -131,27 +140,36 @@ def process_node(state: AgentState) -> dict:
             blocks.append("\n".join(current))
 
         if len(blocks) <= CHUNK_SIZE:
+            # Single call – fits within context window
             prompt = get_summary_prompt(raw_text, allowed_tickers=tickers)
-            response = llm.invoke([HumanMessage(content=prompt)])
+            response = await llm.ainvoke([HumanMessage(content=prompt)])
             summary = response.content
         else:
+            # Parallel chunk calls → single merge call
+            num_chunks = (len(blocks) + CHUNK_SIZE - 1) // CHUNK_SIZE
             logger.info(
-                "Large input (%d blocks) – chunking into batches of %d",
+                "Very large input (%d blocks) – %d parallel chunks of %d",
                 len(blocks),
+                num_chunks,
                 CHUNK_SIZE,
             )
-            partial_summaries: list[str] = []
-            for start in range(0, len(blocks), CHUNK_SIZE):
-                chunk_text = "\n".join(blocks[start : start + CHUNK_SIZE])
-                prompt = get_summary_prompt(chunk_text, allowed_tickers=tickers)
-                resp = llm.invoke([HumanMessage(content=prompt)])
-                partial_summaries.append(resp.content)
+            chunk_prompts = [
+                get_summary_prompt(
+                    "\n".join(blocks[start : start + CHUNK_SIZE]),
+                    allowed_tickers=tickers,
+                )
+                for start in range(0, len(blocks), CHUNK_SIZE)
+            ]
+            chunk_responses = await asyncio.gather(
+                *[llm.ainvoke([HumanMessage(content=p)]) for p in chunk_prompts]
+            )
+            partial_summaries = [r.content for r in chunk_responses]
 
             merge_prompt = get_chunk_merge_prompt(
                 partial_summaries,
                 allowed_tickers=tickers,
             )
-            merged = llm.invoke([HumanMessage(content=merge_prompt)])
+            merged = await llm.ainvoke([HumanMessage(content=merge_prompt)])
             summary = merged.content
 
         logger.info("process_node: summary generated (%d chars)", len(summary))
@@ -204,7 +222,7 @@ def create_agent_graph():
     return graph.compile()
 
 
-# ── Async runner ─────────────────────────────────────────────────────────
+# ── Async runner with parallel TTS + email + Telegram ────────────────────
 
 async def run_agent(
     query: Optional[str] = None,
@@ -215,7 +233,7 @@ async def run_agent(
         query: Comma-separated ticker symbols (e.g. "AAPL,MSFT,TSLA")
 
     Returns:
-        Dictionary with data, raw text, summary, and error
+        Dictionary with data, raw text, summary, error, and delivery statuses
     """
     agent = create_agent_graph()
 
@@ -224,9 +242,80 @@ async def run_agent(
     result = await agent.ainvoke(initial_state)
     logger.info("Agent graph execution completed")
 
-    return {
+    response: Dict[str, Any] = {
         RESP_DATA: result.get("data"),
         RESP_RAW_TEXT: result.get("raw_text"),
         RESP_SUMMARY: result.get("summary"),
         RESP_ERROR: result.get("error"),
     }
+
+    tickers_str = ",".join(result.get("tickers", []))
+
+    if response.get(RESP_SUMMARY) and not response.get(RESP_ERROR):
+        # ── Generate TTS audio first ────────────────────────────────
+        audio_path = await _safe_tts(response[RESP_SUMMARY])
+        response[RESP_AUDIO_PATH] = audio_path
+
+        # ── Send email and Telegram in parallel ─────────────────────
+        email_task = asyncio.create_task(_safe_email(
+            response[RESP_SUMMARY], tickers_str, audio_path,
+        ))
+        telegram_task = asyncio.create_task(_safe_telegram(
+            response[RESP_SUMMARY], audio_path,
+        ))
+
+        response[RESP_EMAIL_STATUS] = await email_task
+        response[RESP_TELEGRAM_STATUS] = await telegram_task
+
+        email_ok = response[RESP_EMAIL_STATUS] == "sent"
+        telegram_ok = response[RESP_TELEGRAM_STATUS] == "sent"
+
+        if email_ok and telegram_ok:
+            logger.info("Email and Telegram notifications sent")
+        else:
+            if not email_ok:
+                logger.warning("Email status: %s", response[RESP_EMAIL_STATUS])
+            if not telegram_ok:
+                logger.warning("Telegram status: %s", response[RESP_TELEGRAM_STATUS])
+
+    return response
+
+
+async def _safe_tts(summary: str) -> Optional[str]:
+    """Generate TTS audio, returning None on failure."""
+    try:
+        return await generate_summary_audio(summary)
+    except Exception as e:
+        logger.error("TTS generation failed: %s", e)
+        return None
+
+
+async def _safe_email(summary: str, tickers: str, audio_path: Optional[str]) -> str:
+    """Send email summary, returning status string instead of raising."""
+    try:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, send_summary_email_oauth, summary, tickers, audio_path,
+        )
+    except Exception as e:
+        logger.error("Email send failed: %s", e)
+        return f"failed: {e}"
+
+
+async def _safe_telegram(summary: str, audio_path: Optional[str]) -> str:
+    """Send TTS audio to Telegram, returning status string instead of raising."""
+    try:
+        thematic_overview = _extract_thematic_overview(summary)
+        return await send_summary_to_telegram(audio_path, thematic_overview)
+    except Exception as e:
+        logger.error("Telegram send failed: %s", e)
+        return f"failed: {e}"
+
+
+def _extract_thematic_overview(summary: str) -> Optional[str]:
+    """Extract first non-header line from summary as a caption."""
+    for line in summary.split("\n"):
+        line = line.strip()
+        if line and not line.startswith("**") and not line.startswith("#"):
+            return line
+    return None
