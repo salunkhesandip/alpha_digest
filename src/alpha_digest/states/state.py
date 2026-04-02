@@ -12,16 +12,15 @@ from typing_extensions import TypedDict
 
 
 class AgentState(TypedDict, total=False):
-    """State for the alpha_digest agent.
+    """State for the alpha_digest agent."""
 
-    Customize this state class to hold all the data your agent needs
-    as it flows through the graph nodes.
-    """
-
-    # Input query or parameter for the agent
+    # Comma-separated ticker symbols provided by the user (e.g. "AAPL,MSFT,TSLA")
     query: str
 
-    # Fetched data items — uses add reducer so multiple fetches accumulate
+    # Parsed list of ticker symbols
+    tickers: list[str]
+
+    # Fetched news articles — uses add reducer so multiple fetches accumulate
     data: Annotated[list[dict], operator.add]
 
     # Formatted text representation for LLM processing

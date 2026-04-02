@@ -10,4 +10,6 @@ build/
 token.json
 credentials.json
 logs/
-*.mp3
+.langgraph_api/
+.venv/
+uv.lock

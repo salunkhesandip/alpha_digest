@@ -53,3 +53,17 @@ CACHE_TTL = 300  # 5 minutes
 MISSING_API_KEY_ERROR = (
     "Missing Google API key. Please set GOOGLE_API_KEY environment variable."
 )
+
+# ── Finnhub ───────────────────────────────────────────────────────────────
+FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
+DEFAULT_LOOKBACK_DAYS = 1
+DEFAULT_NEWS_PER_TICKER = 20
+
+# Ticker list configuration
+# Supply a comma-separated list via the ALPHA_DIGEST_TICKERS environment variable,
+# e.g. ALPHA_DIGEST_TICKERS="AAPL,MSFT,GOOGL"
+_tickers_env = os.getenv("ALPHA_DIGEST_TICKERS") or os.getenv("TICKERS")
+if _tickers_env:
+    DEFAULT_TICKERS = [t.strip().upper() for t in _tickers_env.split(",") if t.strip()]
+else:
+    DEFAULT_TICKERS: list[str] = []

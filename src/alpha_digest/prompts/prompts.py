@@ -1,53 +1,72 @@
-"""Prompts for the alpha_digest agent.
-
-TODO: Customize these prompts for your specific use case.
-"""
+"""Prompts for the alpha_digest agent — stock-news summarization."""
 
 
-SYSTEM_PROMPT = """You are an expert AI assistant that processes and summarizes information.
+SYSTEM_PROMPT = """You are a senior financial analyst AI that summarizes the latest stock market news.
 
 ## Instructions
-1. Carefully analyze the provided content.
-2. Identify the key themes and important points.
-3. Organize the information into logical groups.
-4. Write a clear, concise summary.
+1. Analyze the news articles provided for each ticker symbol.
+2. Identify the most important stories, market-moving events, and sentiment.
+3. Group your analysis by ticker symbol.
+4. For each ticker, highlight:
+   - Key headlines and their potential market impact
+   - Overall sentiment (bullish / bearish / neutral)
+   - Any notable patterns across sources
 
 ## Style guidelines
-- Keep the summary between 3 and 7 paragraphs.
-- Write in a conversational yet concise tone.
-- Avoid simply listing items one by one; synthesize related information.
+- Be concise but insightful — target 2–4 paragraphs per ticker.
+- Use plain language; avoid jargon unless essential.
+- Cite specific headlines when referencing a story.
 """
 
 
 SUMMARY_PROMPT_TEMPLATE = """{system_prompt}
 
-=== CONTENT TO PROCESS ===
+Allowed ticker symbols for this run:
+{allowed_tickers}
+
+Hard rules:
+- Only create top-level sections for these ticker symbols: {allowed_tickers}
+- Do not create separate sections for any other company, stock, ETF, or asset.
+- If another company is mentioned in an article, discuss it only within the section of the requested ticker whose news item included it.
+- If a requested ticker has no meaningful news, include the ticker and say that no material news was found.
+
+=== STOCK NEWS TO ANALYZE ===
 
 {content}
 
-=== END OF CONTENT ===
+=== END OF NEWS ===
 
-Now write a clear summary of the content above. Organize by themes and highlight the most important points."""
+Now write your analysis and summary, organized by ticker symbol."""
 
 
-CHUNK_MERGE_PROMPT = """You previously processed several batches of content. Below are those partial summaries.
+CHUNK_MERGE_PROMPT = """You previously analyzed several batches of stock news. Below are those partial summaries.
 
-Merge them into a single cohesive summary that:
-1. Combines overlapping themes
+Allowed ticker symbols for this run:
+{allowed_tickers}
+
+Merge them into a single cohesive financial digest that:
+1. Combines analysis for the same ticker across batches
 2. Removes redundancy
-3. Maintains a logical flow
+3. Maintains ticker-by-ticker organization
+4. Uses only these ticker sections: {allowed_tickers}
+5. Does not create any section for unrequested companies or symbols
 
 Partial summaries:
 {partial_summaries}
 
-Write the merged summary now."""
+Write the merged financial digest now."""
 
 
-def get_summary_prompt(content: str, system_prompt: str = SYSTEM_PROMPT) -> str:
+def get_summary_prompt(
+    content: str,
+    allowed_tickers: list[str],
+    system_prompt: str = SYSTEM_PROMPT,
+) -> str:
     """Format the summary prompt with content.
 
     Args:
         content: Formatted content to summarize
+        allowed_tickers: Requested ticker symbols allowed in the output
         system_prompt: System prompt for the LLM
 
     Returns:
@@ -55,15 +74,20 @@ def get_summary_prompt(content: str, system_prompt: str = SYSTEM_PROMPT) -> str:
     """
     return SUMMARY_PROMPT_TEMPLATE.format(
         system_prompt=system_prompt,
+        allowed_tickers=", ".join(allowed_tickers),
         content=content,
     )
 
 
-def get_chunk_merge_prompt(partial_summaries: list[str]) -> str:
+def get_chunk_merge_prompt(
+    partial_summaries: list[str],
+    allowed_tickers: list[str],
+) -> str:
     """Build a prompt that asks the LLM to merge chunk-level summaries.
 
     Args:
         partial_summaries: List of summaries produced from individual chunks
+        allowed_tickers: Requested ticker symbols allowed in the output
 
     Returns:
         Formatted merge prompt
@@ -71,4 +95,7 @@ def get_chunk_merge_prompt(partial_summaries: list[str]) -> str:
     combined = "\n\n---\n\n".join(
         f"[Batch {i}]\n{s}" for i, s in enumerate(partial_summaries, 1)
     )
-    return CHUNK_MERGE_PROMPT.format(partial_summaries=combined)
+    return CHUNK_MERGE_PROMPT.format(
+        partial_summaries=combined,
+        allowed_tickers=", ".join(allowed_tickers),
+    )

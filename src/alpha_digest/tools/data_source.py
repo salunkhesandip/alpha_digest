@@ -1,18 +1,20 @@
-"""Data source tools for fetching and formatting data.
-
-TODO: Replace this with your actual data source integration
-(e.g., API client, database connector, web scraper, etc.)
-"""
+"""Data source tools — Finnhub company-news integration."""
 
 import time
-from typing import Optional
+from datetime import datetime, timedelta, timezone
+
+import requests
 
 from src.alpha_digest.config import (
+    API_TIMEOUT,
     CACHE_TTL,
+    FINNHUB_BASE_URL,
+    DEFAULT_TICKERS,
     MAX_RETRIES,
     RETRY_BACKOFF_BASE,
     logger,
 )
+from src.alpha_digest.utils import get_finnhub_api_key
 
 
 # ── Simple in-memory cache ──────────────────────────────────────────────
@@ -58,60 +60,134 @@ def _retry(fn, *args, **kwargs):
     ) from last_exc
 
 
-def fetch_data(query: str = "", limit: int = 20) -> list[dict]:
-    """Fetch data from your external source.
+# ── Finnhub company-news fetcher ─────────────────────────────────────────
 
-    TODO: Replace this stub with your actual data fetching logic.
+def _fetch_company_news(
+    symbol: str,
+    from_date: str,
+    to_date: str,
+    token: str,
+) -> list[dict]:
+    """GET https://finnhub.io/api/v1/company-news for a single ticker."""
+    url = f"{FINNHUB_BASE_URL}/company-news"
+    params = {
+        "symbol": symbol,
+        "from": from_date,
+        "to": to_date,
+        "token": token,
+    }
+    resp = requests.get(url, params=params, timeout=API_TIMEOUT)
+    resp.raise_for_status()
+    return resp.json()  # list of article dicts
+
+
+def fetch_news_for_tickers(
+    symbols: list[str],
+    limit_per_ticker: int = 20,
+    lookback_days: int = 1,
+) -> list[dict]:
+    """Fetch Finnhub company news for every ticker in *symbols*.
 
     Args:
-        query: Search query or identifier
-        limit: Maximum number of items to fetch
+        symbols: List of ticker symbols (e.g. ["AAPL", "MSFT"]).
+        limit_per_ticker: Max articles kept per ticker.
+        lookback_days: How many days back to fetch (default 1 = last day).
 
     Returns:
-        List of data items as dictionaries
+        Combined list of article dicts, each tagged with ``symbol``.
     """
-    cache_key = _cache_key("default", query, limit)
-    cached = _get_cached(cache_key)
-    if cached is not None:
-        return cached
+    token = get_finnhub_api_key()
+    today = datetime.now(timezone.utc).date()
+    from_date = (today - timedelta(days=lookback_days)).isoformat()
+    to_date = today.isoformat()
 
-    def _fetch():
-        # TODO: Replace with your actual API/data source call
-        # Example structure:
-        # response = your_api_client.get_data(query=query, limit=limit)
-        # return [{"id": item.id, "text": item.text, ...} for item in response]
-        raise NotImplementedError(
-            "Replace this stub in tools/data_source.py with your actual data fetching logic."
-        )
+    all_articles: list[dict] = []
 
-    try:
-        data = _retry(_fetch)
-        _set_cache(cache_key, data)
-        return data
-    except Exception as e:
-        raise RuntimeError(f"Failed to fetch data: {e!s}")
+    for sym in symbols:
+        sym = sym.strip().upper()
+        cache_key = _cache_key("finnhub", sym, limit_per_ticker)
+        cached = _get_cached(cache_key)
+        if cached is not None:
+            all_articles.extend(cached)
+            continue
+
+        try:
+            articles = _retry(
+                _fetch_company_news, sym, from_date, to_date, token
+            )
+            # Keep only the most recent *limit_per_ticker* articles
+            articles = articles[:limit_per_ticker]
+            # Preserve Finnhub metadata and group by the queried ticker.
+            for art in articles:
+                if "symbol" in art:
+                    art["_finnhub_symbol"] = art["symbol"]
+                if "related" in art:
+                    related = art["related"]
+                    art["_finnhub_related"] = (
+                        [item.upper() for item in related]
+                        if isinstance(related, list)
+                        else [part.strip().upper() for part in str(related).split(",") if part.strip()]
+                    )
+                art["symbol"] = sym
+            _set_cache(cache_key, articles)
+            logger.info("Fetched %d articles for %s", len(articles), sym)
+            all_articles.extend(articles)
+        except Exception as exc:
+            logger.error("Failed to fetch news for %s: %s", sym, exc)
+
+    return all_articles
+
+
+# ── Legacy wrappers (kept for backward compatibility) ────────────────────
+
+def fetch_data(query: str = "", limit: int = 20) -> list[dict]:
+    """Parse *query* as comma-separated tickers and fetch Finnhub news."""
+    symbols = [s.strip().upper() for s in query.split(",") if s.strip()]
+    if not symbols:
+        # Fall back to DEFAULT_TICKERS from config (can be set via
+        # ALPHA_DIGEST_TICKERS environment variable). If still empty, raise.
+        if DEFAULT_TICKERS:
+            symbols = DEFAULT_TICKERS
+        else:
+            raise ValueError(
+                "Provide at least one ticker symbol (e.g. 'AAPL,MSFT') "
+                "or set ALPHA_DIGEST_TICKERS environment variable."
+            )
+    return fetch_news_for_tickers(symbols, limit_per_ticker=limit)
 
 
 def format_data_for_llm(data: list[dict]) -> str:
-    """Format data items into readable text for LLM processing.
-
-    TODO: Customize the formatting to match your data structure.
-
-    Args:
-        data: List of data items
-
-    Returns:
-        Formatted text representation
-    """
+    """Format Finnhub news articles into readable text for LLM."""
     if not data:
-        return "No data found."
+        return "No news articles found for the requested tickers."
 
-    formatted = "=== Data Items ===\n\n"
+    formatted = "=== Stock Market News ===\n\n"
+    current_symbol = None
 
-    for i, item in enumerate(data, 1):
-        formatted += f"Item {i}:\n"
-        for key, value in item.items():
-            formatted += f"  {key}: {value}\n"
+    for article in data:
+        sym = article.get("symbol", "UNKNOWN")
+        if sym != current_symbol:
+            current_symbol = sym
+            formatted += f"\n{'=' * 50}\n  Ticker: {sym}\n{'=' * 50}\n\n"
+
+        headline = article.get("headline", "No headline")
+        source = article.get("source", "Unknown source")
+        summary = article.get("summary", "")
+        url = article.get("url", "")
+        ts = article.get("datetime")
+        date_str = (
+            datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            if ts
+            else "Unknown date"
+        )
+
+        formatted += f"Headline: {headline}\n"
+        formatted += f"Source:   {source}\n"
+        formatted += f"Date:     {date_str}\n"
+        if summary:
+            formatted += f"Summary:  {summary}\n"
+        if url:
+            formatted += f"URL:      {url}\n"
         formatted += "-" * 50 + "\n\n"
 
     return formatted

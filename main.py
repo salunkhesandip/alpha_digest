@@ -16,19 +16,19 @@ logger.info(f"Program started at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 from src.alpha_digest.agent import run_agent
 
 
-async def main(query: Optional[str] = None) -> None:
+async def main(tickers: Optional[str] = None) -> None:
     """Run the alpha_digest agent.
 
     Args:
-        query: Optional input query or parameter for the agent.
+        tickers: Comma-separated ticker symbols (e.g. "AAPL,MSFT,TSLA").
     """
 
-    if query:
-        logger.info(f"Running agent with query: {query}")
+    if tickers:
+        logger.info(f"Running agent with tickers: {tickers}")
     else:
         logger.info("Running agent with default configuration...")
 
-    result = await run_agent(query=query)
+    result = await run_agent(query=tickers)
 
     if result["error"]:
         logger.error(f"Error: {result['error']}")
@@ -42,15 +42,23 @@ async def main(query: Optional[str] = None) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="A LangGraph AI agent for Stock Market Analysis"
+        description="A LangGraph AI agent for Stock Market News Analysis"
     )
+    parser.add_argument(
+        "--tickers",
+        type=str,
+        help="Comma-separated ticker symbols (e.g. AAPL,MSFT,TSLA)",
+        default=None,
+    )
+    # Keep --query as alias for --tickers for backward compatibility
     parser.add_argument(
         "--query",
         type=str,
-        help="Input query or parameter for the agent",
+        help="Alias for --tickers",
         default=None,
     )
 
     args = parser.parse_args()
+    tickers = args.tickers or args.query
 
-    asyncio.run(main(query=args.query))
+    asyncio.run(main(tickers=tickers))
