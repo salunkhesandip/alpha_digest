@@ -12,6 +12,7 @@ from src.alpha_digest.config import (
     FINNHUB_BASE_URL,
     DEFAULT_TICKERS,
     MAX_RETRIES,
+    MIN_RELEVANCE_SCORE,
     RETRY_BACKOFF_BASE,
     logger,
 )
@@ -157,6 +158,158 @@ def preprocess_articles(
     return kept
 
 
+# ── Relevance scoring ────────────────────────────────────────────────────
+# Finnhub's "related" field is very broad — a query for AAPL often returns
+# dozens of articles about Amazon, IBM, SpaceX, ETFs, etc.  We score each
+# article against the queried ticker and drop anything below the threshold.
+
+_TICKER_NAMES: dict[str, list[str]] = {
+    # Tech mega-cap
+    "AAPL": ["apple"],
+    "MSFT": ["microsoft"],
+    "GOOGL": ["google", "alphabet"],
+    "GOOG": ["google", "alphabet"],
+    "AMZN": ["amazon"],
+    "TSLA": ["tesla"],
+    "META": ["meta platforms"],
+    "NVDA": ["nvidia"],
+    "NFLX": ["netflix"],
+    # Semiconductors
+    "AMD": ["advanced micro devices"],
+    "INTC": ["intel"],
+    "QCOM": ["qualcomm"],
+    "AVGO": ["broadcom"],
+    "TSM": ["tsmc", "taiwan semi"],
+    "MU": ["micron"],
+    # Enterprise tech
+    "CRM": ["salesforce"],
+    "ORCL": ["oracle"],
+    "IBM": ["ibm"],
+    "ADBE": ["adobe"],
+    "NOW": ["servicenow"],
+    # Fintech / payments
+    "PYPL": ["paypal"],
+    "V": ["visa"],
+    "MA": ["mastercard"],
+    "SQ": ["block inc"],
+    # Finance
+    "JPM": ["jpmorgan", "jp morgan"],
+    "BAC": ["bank of america"],
+    "GS": ["goldman sachs"],
+    "BRK.A": ["berkshire"],
+    "BRK.B": ["berkshire"],
+    # Consumer / retail
+    "WMT": ["walmart"],
+    "COST": ["costco"],
+    "HD": ["home depot"],
+    "DIS": ["disney"],
+    "NKE": ["nike"],
+    "SBUX": ["starbucks"],
+    "MCD": ["mcdonald"],
+    "KO": ["coca-cola", "coca cola"],
+    "PEP": ["pepsi", "pepsico"],
+    # Health
+    "JNJ": ["johnson & johnson"],
+    "UNH": ["unitedhealth"],
+    "LLY": ["eli lilly"],
+    "PFE": ["pfizer"],
+    "ABBV": ["abbvie"],
+    "MRK": ["merck"],
+    # Telecom
+    "T": ["at&t"],
+    "VZ": ["verizon"],
+    "TMUS": ["t-mobile"],
+    # Industrial / energy
+    "BA": ["boeing"],
+    "XOM": ["exxon"],
+    "CVX": ["chevron"],
+    "CAT": ["caterpillar"],
+    # Other prominent
+    "PLTR": ["palantir"],
+    "DELL": ["dell"],
+    "UBER": ["uber"],
+    "ABNB": ["airbnb"],
+    "ROKU": ["roku"],
+    "COIN": ["coinbase"],
+    "CRWD": ["crowdstrike"],
+    "SNOW": ["snowflake"],
+    "NET": ["cloudflare"],
+    "DDOG": ["datadog"],
+}
+
+
+def _relevance_score(article: dict, ticker: str) -> float:
+    """Score how relevant *article* is to *ticker* (0.0 → 1.0).
+
+    Scoring heuristic:
+      +0.50  ticker symbol appears in headline
+      +0.20  ticker symbol appears in summary
+      +0.40  company name appears in headline
+      +0.15  company name appears in summary
+      +0.10  none of the above (article only has 'related' tag)
+    """
+    headline = (article.get("headline") or "").lower()
+    summary = (article.get("summary") or "").lower()
+    ticker_lower = ticker.lower()
+    score = 0.0
+
+    # Ticker symbol mentions
+    if ticker_lower in headline:
+        score += 0.50
+    if ticker_lower in summary:
+        score += 0.20
+
+    # Company name mentions (first match wins per field)
+    names = _TICKER_NAMES.get(ticker.upper(), [])
+    for name in names:
+        if name in headline:
+            score += 0.40
+            break
+    for name in names:
+        if name in summary:
+            score += 0.15
+            break
+
+    # Fallback: article only matched via Finnhub 'related' tag
+    if score == 0.0:
+        score = 0.10
+
+    return min(score, 1.0)
+
+
+def filter_by_relevance(
+    articles: list[dict],
+    ticker: str,
+    min_score: float | None = None,
+) -> list[dict]:
+    """Keep only articles scoring at or above *min_score* for *ticker*.
+
+    Articles are returned sorted by relevance (desc), then by datetime (desc).
+    Each kept article gets a ``_relevance`` key with its score.
+    """
+    threshold = min_score if min_score is not None else MIN_RELEVANCE_SCORE
+    scored: list[tuple[float, dict]] = []
+    removed = 0
+
+    for art in articles:
+        s = _relevance_score(art, ticker)
+        if s >= threshold:
+            art["_relevance"] = round(s, 2)
+            scored.append((s, art))
+        else:
+            removed += 1
+
+    # Sort: highest relevance first, then most recent first
+    scored.sort(key=lambda pair: (pair[0], pair[1].get("datetime", 0)), reverse=True)
+
+    if removed:
+        logger.info(
+            "Relevance filter (%s): kept %d, removed %d (threshold %.2f)",
+            ticker, len(scored), removed, threshold,
+        )
+    return [art for _, art in scored]
+
+
 # ── Retry helper ─────────────────────────────────────────────────────────
 def _retry(fn, *args, **kwargs):
     """Call *fn* with exponential back-off on failure."""
@@ -249,6 +402,10 @@ def fetch_news_for_tickers(
                         else [part.strip().upper() for part in str(related).split(",") if part.strip()]
                     )
                 art["symbol"] = sym
+
+            # Filter out articles that aren't actually about this ticker
+            articles = filter_by_relevance(articles, sym)
+
             _set_cache(cache_key, articles)
             logger.info("Fetched %d articles for %s", len(articles), sym)
             all_articles.extend(articles)
@@ -305,12 +462,23 @@ def format_data_for_llm(data: list[dict]) -> str:
         source = article.get("source", "Unknown source")
         summary = article.get("summary", "")
         url = article.get("url", "")
+        relevance = article.get("_relevance")
         ts = article.get("datetime")
         date_str = (
             datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
             if ts
             else "Unknown date"
         )
+
+        # Annotate relevance so the LLM can weigh articles accordingly
+        if relevance is not None:
+            if relevance >= 0.5:
+                rel_tag = "HIGH"
+            elif relevance >= 0.3:
+                rel_tag = "MEDIUM"
+            else:
+                rel_tag = "LOW"
+            formatted += f"Relevance: {rel_tag}\n"
 
         formatted += f"Headline: {headline}\n"
         formatted += f"Source:   {source}\n"

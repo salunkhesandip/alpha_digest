@@ -61,6 +61,11 @@ FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
 DEFAULT_LOOKBACK_DAYS = 1
 DEFAULT_NEWS_PER_TICKER = 20
 
+# Relevance filtering — Finnhub's "related" field is very broad, so many
+# returned articles are only tangentially related to the queried ticker.
+# Articles below this score are dropped.  Set to 0.0 to disable filtering.
+MIN_RELEVANCE_SCORE = float(os.getenv("ALPHA_DIGEST_MIN_RELEVANCE", "0.15"))
+
 # Ticker list configuration
 # Supply a comma-separated list via the ALPHA_DIGEST_TICKERS environment variable,
 # e.g. ALPHA_DIGEST_TICKERS="AAPL,MSFT,GOOGL"
