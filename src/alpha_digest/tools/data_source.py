@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import requests
+import difflib
 
 from src.alpha_digest.config import (
     API_TIMEOUT,
@@ -11,10 +12,17 @@ from src.alpha_digest.config import (
     FINNHUB_BASE_URL,
     DEFAULT_TICKERS,
     MAX_RETRIES,
+    MIN_RELEVANCE_SCORE,
     RETRY_BACKOFF_BASE,
     logger,
 )
 from src.alpha_digest.utils import get_finnhub_api_key
+
+# ── Preprocessing configuration (configurable via environment) ────────
+import os
+MIN_SUMMARY_LEN = int(os.getenv("ALPHA_DIGEST_MIN_SUMMARY_LEN", "20"))
+MIN_HEADLINE_LEN = int(os.getenv("ALPHA_DIGEST_MIN_HEADLINE_LEN", "15"))
+SIMILARITY_THRESHOLD = float(os.getenv("ALPHA_DIGEST_SIMILARITY_THRESHOLD", "0.85"))
 
 
 # ── Simple in-memory cache ──────────────────────────────────────────────
@@ -35,6 +43,271 @@ def _get_cached(key: str) -> list[dict] | None:
 
 def _set_cache(key: str, data: list[dict]) -> None:
     _cache[key] = (time.time(), data)
+
+
+# ── Article preprocessing helpers ────────────────────────────────────────
+def _is_small_article(
+    article: dict,
+    min_summary_len: int | None = None,
+    min_headline_len: int | None = None,
+) -> bool:
+    """Return True if article is too small/noisy to include for LLM.
+    
+    Uses environment-configured defaults if parameters not provided.
+    """
+    summary_thresh = min_summary_len if min_summary_len is not None else MIN_SUMMARY_LEN
+    headline_thresh = min_headline_len if min_headline_len is not None else MIN_HEADLINE_LEN
+    
+    headline = (article.get("headline") or "").strip()
+    summary = (article.get("summary") or "").strip()
+    if not headline and not summary:
+        return True
+    if len(headline) < headline_thresh and len(summary) < summary_thresh:
+        return True
+    return False
+
+
+def _are_similar(text_a: str, text_b: str, threshold: float | None = None) -> bool:
+    """Return True if two texts are similar above the threshold ratio.
+    
+    Uses environment-configured default if threshold not provided.
+    Early exit if texts are too different in length (optimization).
+    """
+    if not text_a or not text_b:
+        return False
+    
+    thresh = threshold if threshold is not None else SIMILARITY_THRESHOLD
+    
+    # Early exit: if lengths differ significantly, likely not similar
+    len_ratio = min(len(text_a), len(text_b)) / max(len(text_a), len(text_b))
+    if len_ratio < 0.6:  # less than 60% length match
+        return False
+    
+    ratio = difflib.SequenceMatcher(None, text_a, text_b).ratio()
+    return ratio >= thresh
+
+
+def preprocess_articles(
+    articles: list[dict],
+    min_summary_len: int | None = None,
+    min_headline_len: int | None = None,
+    similarity_threshold: float | None = None,
+) -> list[dict]:
+    """Filter out small/noisy articles and collapse near-duplicates.
+
+    - Removes articles with very short headlines and summaries.
+    - Removes exact duplicates by URL.
+    - Collapses similar articles (headline/summary) keeping the one
+      with the longer summary (or the first seen if equal).
+    
+    Uses environment-configured defaults for thresholds if not provided.
+    Returns detailed logs with counts of removed articles.
+    """
+    if not articles:
+        return []
+
+    initial_count = len(articles)
+    seen_urls: set[str] = set()
+    kept: list[dict] = []
+    removed_small = 0
+    removed_duplicates = 0
+    collapsed_similar = 0
+
+    for art in articles:
+        # skip small/noisy articles
+        if _is_small_article(art, min_summary_len, min_headline_len):
+            removed_small += 1
+            continue
+
+        url = (art.get("url") or "").strip()
+        if url and url in seen_urls:
+            removed_duplicates += 1
+            continue
+
+        headline = (art.get("headline") or "").strip()
+        summary = (art.get("summary") or "").strip()
+
+        replaced = False
+        for i, existing in enumerate(kept):
+            ex_head = (existing.get("headline") or "").strip()
+            ex_sum = (existing.get("summary") or "").strip()
+            # if either headline or summary are similar, treat as duplicate
+            if _are_similar(headline, ex_head, similarity_threshold) or _are_similar(summary, ex_sum, similarity_threshold):
+                # prefer the article with longer summary (more content)
+                if len(summary) > len(ex_sum):
+                    kept[i] = art
+                    if url:
+                        seen_urls.add(url)
+                collapsed_similar += 1
+                replaced = True
+                break
+
+        if not replaced:
+            kept.append(art)
+            if url:
+                seen_urls.add(url)
+
+    logger.debug(
+        "Preprocessing: %d initial | -%d small | -%d dupes | -%d similar → %d final",
+        initial_count,
+        removed_small,
+        removed_duplicates,
+        collapsed_similar,
+        len(kept),
+    )
+    return kept
+
+
+# ── Relevance scoring ────────────────────────────────────────────────────
+# Finnhub's "related" field is very broad — a query for AAPL often returns
+# dozens of articles about Amazon, IBM, SpaceX, ETFs, etc.  We score each
+# article against the queried ticker and drop anything below the threshold.
+
+_TICKER_NAMES: dict[str, list[str]] = {
+    # Tech mega-cap
+    "AAPL": ["apple"],
+    "MSFT": ["microsoft"],
+    "GOOGL": ["google", "alphabet"],
+    "GOOG": ["google", "alphabet"],
+    "AMZN": ["amazon"],
+    "TSLA": ["tesla"],
+    "META": ["meta platforms"],
+    "NVDA": ["nvidia"],
+    "NFLX": ["netflix"],
+    # Semiconductors
+    "AMD": ["advanced micro devices"],
+    "INTC": ["intel"],
+    "QCOM": ["qualcomm"],
+    "AVGO": ["broadcom"],
+    "TSM": ["tsmc", "taiwan semi"],
+    "MU": ["micron"],
+    # Enterprise tech
+    "CRM": ["salesforce"],
+    "ORCL": ["oracle"],
+    "IBM": ["ibm"],
+    "ADBE": ["adobe"],
+    "NOW": ["servicenow"],
+    # Fintech / payments
+    "PYPL": ["paypal"],
+    "V": ["visa"],
+    "MA": ["mastercard"],
+    "SQ": ["block inc"],
+    # Finance
+    "JPM": ["jpmorgan", "jp morgan"],
+    "BAC": ["bank of america"],
+    "GS": ["goldman sachs"],
+    "BRK.A": ["berkshire"],
+    "BRK.B": ["berkshire"],
+    # Consumer / retail
+    "WMT": ["walmart"],
+    "COST": ["costco"],
+    "HD": ["home depot"],
+    "DIS": ["disney"],
+    "NKE": ["nike"],
+    "SBUX": ["starbucks"],
+    "MCD": ["mcdonald"],
+    "KO": ["coca-cola", "coca cola"],
+    "PEP": ["pepsi", "pepsico"],
+    # Health
+    "JNJ": ["johnson & johnson"],
+    "UNH": ["unitedhealth"],
+    "LLY": ["eli lilly"],
+    "PFE": ["pfizer"],
+    "ABBV": ["abbvie"],
+    "MRK": ["merck"],
+    # Telecom
+    "T": ["at&t"],
+    "VZ": ["verizon"],
+    "TMUS": ["t-mobile"],
+    # Industrial / energy
+    "BA": ["boeing"],
+    "XOM": ["exxon"],
+    "CVX": ["chevron"],
+    "CAT": ["caterpillar"],
+    # Other prominent
+    "PLTR": ["palantir"],
+    "DELL": ["dell"],
+    "UBER": ["uber"],
+    "ABNB": ["airbnb"],
+    "ROKU": ["roku"],
+    "COIN": ["coinbase"],
+    "CRWD": ["crowdstrike"],
+    "SNOW": ["snowflake"],
+    "NET": ["cloudflare"],
+    "DDOG": ["datadog"],
+}
+
+
+def _relevance_score(article: dict, ticker: str) -> float:
+    """Score how relevant *article* is to *ticker* (0.0 → 1.0).
+
+    Scoring heuristic:
+      +0.50  ticker symbol appears in headline
+      +0.20  ticker symbol appears in summary
+      +0.40  company name appears in headline
+      +0.15  company name appears in summary
+      +0.10  none of the above (article only has 'related' tag)
+    """
+    headline = (article.get("headline") or "").lower()
+    summary = (article.get("summary") or "").lower()
+    ticker_lower = ticker.lower()
+    score = 0.0
+
+    # Ticker symbol mentions
+    if ticker_lower in headline:
+        score += 0.50
+    if ticker_lower in summary:
+        score += 0.20
+
+    # Company name mentions (first match wins per field)
+    names = _TICKER_NAMES.get(ticker.upper(), [])
+    for name in names:
+        if name in headline:
+            score += 0.40
+            break
+    for name in names:
+        if name in summary:
+            score += 0.15
+            break
+
+    # Fallback: article only matched via Finnhub 'related' tag
+    if score == 0.0:
+        score = 0.10
+
+    return min(score, 1.0)
+
+
+def filter_by_relevance(
+    articles: list[dict],
+    ticker: str,
+    min_score: float | None = None,
+) -> list[dict]:
+    """Keep only articles scoring at or above *min_score* for *ticker*.
+
+    Articles are returned sorted by relevance (desc), then by datetime (desc).
+    Each kept article gets a ``_relevance`` key with its score.
+    """
+    threshold = min_score if min_score is not None else MIN_RELEVANCE_SCORE
+    scored: list[tuple[float, dict]] = []
+    removed = 0
+
+    for art in articles:
+        s = _relevance_score(art, ticker)
+        if s >= threshold:
+            art["_relevance"] = round(s, 2)
+            scored.append((s, art))
+        else:
+            removed += 1
+
+    # Sort: highest relevance first, then most recent first
+    scored.sort(key=lambda pair: (pair[0], pair[1].get("datetime", 0)), reverse=True)
+
+    if removed:
+        logger.info(
+            "Relevance filter (%s): kept %d, removed %d (threshold %.2f)",
+            ticker, len(scored), removed, threshold,
+        )
+    return [art for _, art in scored]
 
 
 # ── Retry helper ─────────────────────────────────────────────────────────
@@ -129,19 +402,34 @@ def fetch_news_for_tickers(
                         else [part.strip().upper() for part in str(related).split(",") if part.strip()]
                     )
                 art["symbol"] = sym
+
+            # Filter out articles that aren't actually about this ticker
+            articles = filter_by_relevance(articles, sym)
+
             _set_cache(cache_key, articles)
             logger.info("Fetched %d articles for %s", len(articles), sym)
             all_articles.extend(articles)
         except Exception as exc:
             logger.error("Failed to fetch news for %s: %s", sym, exc)
 
+    # Preprocess combined articles to remove noise/duplicates before returning
+    all_articles = preprocess_articles(all_articles)
     return all_articles
 
 
 # ── Legacy wrappers (kept for backward compatibility) ────────────────────
 
-def fetch_data(query: str = "", limit: int = 20) -> list[dict]:
-    """Parse *query* as comma-separated tickers and fetch Finnhub news."""
+def fetch_data(query: str = "", limit: int = 20, lookback_days: int = 1) -> list[dict]:
+    """Parse *query* as comma-separated tickers and fetch Finnhub news.
+    
+    Args:
+        query: Comma-separated ticker symbols (e.g. "AAPL,MSFT").
+        limit: Max articles per ticker (default 20).
+        lookback_days: How many days back to fetch (default 1).
+        
+    Returns:
+        Preprocessed list of article dicts, deduplicated and noise-filtered.
+    """
     symbols = [s.strip().upper() for s in query.split(",") if s.strip()]
     if not symbols:
         # Fall back to DEFAULT_TICKERS from config (can be set via
@@ -153,7 +441,7 @@ def fetch_data(query: str = "", limit: int = 20) -> list[dict]:
                 "Provide at least one ticker symbol (e.g. 'AAPL,MSFT') "
                 "or set ALPHA_DIGEST_TICKERS environment variable."
             )
-    return fetch_news_for_tickers(symbols, limit_per_ticker=limit)
+    return fetch_news_for_tickers(symbols, limit_per_ticker=limit, lookback_days=lookback_days)
 
 
 def format_data_for_llm(data: list[dict]) -> str:
@@ -174,12 +462,23 @@ def format_data_for_llm(data: list[dict]) -> str:
         source = article.get("source", "Unknown source")
         summary = article.get("summary", "")
         url = article.get("url", "")
+        relevance = article.get("_relevance")
         ts = article.get("datetime")
         date_str = (
             datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
             if ts
             else "Unknown date"
         )
+
+        # Annotate relevance so the LLM can weigh articles accordingly
+        if relevance is not None:
+            if relevance >= 0.5:
+                rel_tag = "HIGH"
+            elif relevance >= 0.3:
+                rel_tag = "MEDIUM"
+            else:
+                rel_tag = "LOW"
+            formatted += f"Relevance: {rel_tag}\n"
 
         formatted += f"Headline: {headline}\n"
         formatted += f"Source:   {source}\n"

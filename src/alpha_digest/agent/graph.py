@@ -256,12 +256,12 @@ async def run_agent(
         audio_path = await _safe_tts(response[RESP_SUMMARY])
         response[RESP_AUDIO_PATH] = audio_path
 
-        # ── Send email and Telegram in parallel ─────────────────────
+        # ── Send email (text only) and Telegram (with MP3) in parallel ─────
         email_task = asyncio.create_task(_safe_email(
-            response[RESP_SUMMARY], tickers_str, audio_path,
+            response[RESP_SUMMARY], tickers_str, None  # No audio attachment
         ))
         telegram_task = asyncio.create_task(_safe_telegram(
-            response[RESP_SUMMARY], audio_path,
+            response[RESP_SUMMARY], audio_path,  # MP3 only to Telegram
         ))
 
         response[RESP_EMAIL_STATUS] = await email_task
