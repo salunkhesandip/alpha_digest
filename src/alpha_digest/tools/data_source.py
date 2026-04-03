@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import requests
+import difflib
 
 from src.alpha_digest.config import (
     API_TIMEOUT,
@@ -15,6 +16,12 @@ from src.alpha_digest.config import (
     logger,
 )
 from src.alpha_digest.utils import get_finnhub_api_key
+
+# ── Preprocessing configuration (configurable via environment) ────────
+import os
+MIN_SUMMARY_LEN = int(os.getenv("ALPHA_DIGEST_MIN_SUMMARY_LEN", "20"))
+MIN_HEADLINE_LEN = int(os.getenv("ALPHA_DIGEST_MIN_HEADLINE_LEN", "15"))
+SIMILARITY_THRESHOLD = float(os.getenv("ALPHA_DIGEST_SIMILARITY_THRESHOLD", "0.85"))
 
 
 # ── Simple in-memory cache ──────────────────────────────────────────────
@@ -35,6 +42,119 @@ def _get_cached(key: str) -> list[dict] | None:
 
 def _set_cache(key: str, data: list[dict]) -> None:
     _cache[key] = (time.time(), data)
+
+
+# ── Article preprocessing helpers ────────────────────────────────────────
+def _is_small_article(
+    article: dict,
+    min_summary_len: int | None = None,
+    min_headline_len: int | None = None,
+) -> bool:
+    """Return True if article is too small/noisy to include for LLM.
+    
+    Uses environment-configured defaults if parameters not provided.
+    """
+    summary_thresh = min_summary_len if min_summary_len is not None else MIN_SUMMARY_LEN
+    headline_thresh = min_headline_len if min_headline_len is not None else MIN_HEADLINE_LEN
+    
+    headline = (article.get("headline") or "").strip()
+    summary = (article.get("summary") or "").strip()
+    if not headline and not summary:
+        return True
+    if len(headline) < headline_thresh and len(summary) < summary_thresh:
+        return True
+    return False
+
+
+def _are_similar(text_a: str, text_b: str, threshold: float | None = None) -> bool:
+    """Return True if two texts are similar above the threshold ratio.
+    
+    Uses environment-configured default if threshold not provided.
+    Early exit if texts are too different in length (optimization).
+    """
+    if not text_a or not text_b:
+        return False
+    
+    thresh = threshold if threshold is not None else SIMILARITY_THRESHOLD
+    
+    # Early exit: if lengths differ significantly, likely not similar
+    len_ratio = min(len(text_a), len(text_b)) / max(len(text_a), len(text_b))
+    if len_ratio < 0.6:  # less than 60% length match
+        return False
+    
+    ratio = difflib.SequenceMatcher(None, text_a, text_b).ratio()
+    return ratio >= thresh
+
+
+def preprocess_articles(
+    articles: list[dict],
+    min_summary_len: int | None = None,
+    min_headline_len: int | None = None,
+    similarity_threshold: float | None = None,
+) -> list[dict]:
+    """Filter out small/noisy articles and collapse near-duplicates.
+
+    - Removes articles with very short headlines and summaries.
+    - Removes exact duplicates by URL.
+    - Collapses similar articles (headline/summary) keeping the one
+      with the longer summary (or the first seen if equal).
+    
+    Uses environment-configured defaults for thresholds if not provided.
+    Returns detailed logs with counts of removed articles.
+    """
+    if not articles:
+        return []
+
+    initial_count = len(articles)
+    seen_urls: set[str] = set()
+    kept: list[dict] = []
+    removed_small = 0
+    removed_duplicates = 0
+    collapsed_similar = 0
+
+    for art in articles:
+        # skip small/noisy articles
+        if _is_small_article(art, min_summary_len, min_headline_len):
+            removed_small += 1
+            continue
+
+        url = (art.get("url") or "").strip()
+        if url and url in seen_urls:
+            removed_duplicates += 1
+            continue
+
+        headline = (art.get("headline") or "").strip()
+        summary = (art.get("summary") or "").strip()
+
+        replaced = False
+        for i, existing in enumerate(kept):
+            ex_head = (existing.get("headline") or "").strip()
+            ex_sum = (existing.get("summary") or "").strip()
+            # if either headline or summary are similar, treat as duplicate
+            if _are_similar(headline, ex_head, similarity_threshold) or _are_similar(summary, ex_sum, similarity_threshold):
+                # prefer the article with longer summary (more content)
+                if len(summary) > len(ex_sum):
+                    kept[i] = art
+                    if url:
+                        seen_urls.add(url)
+                collapsed_similar += 1
+                replaced = True
+                break
+
+        if not replaced:
+            kept.append(art)
+            if url:
+                seen_urls.add(url)
+
+    logger.debug(
+        "Preprocessing: %d initial | -%d small | -%d dupes | -%d similar → %d final",
+        initial_count,
+        removed_small,
+        removed_duplicates,
+        collapsed_similar,
+        len(kept),
+    )
+    return kept
 
 
 # ── Retry helper ─────────────────────────────────────────────────────────
@@ -135,13 +255,24 @@ def fetch_news_for_tickers(
         except Exception as exc:
             logger.error("Failed to fetch news for %s: %s", sym, exc)
 
+    # Preprocess combined articles to remove noise/duplicates before returning
+    all_articles = preprocess_articles(all_articles)
     return all_articles
 
 
 # ── Legacy wrappers (kept for backward compatibility) ────────────────────
 
-def fetch_data(query: str = "", limit: int = 20) -> list[dict]:
-    """Parse *query* as comma-separated tickers and fetch Finnhub news."""
+def fetch_data(query: str = "", limit: int = 20, lookback_days: int = 1) -> list[dict]:
+    """Parse *query* as comma-separated tickers and fetch Finnhub news.
+    
+    Args:
+        query: Comma-separated ticker symbols (e.g. "AAPL,MSFT").
+        limit: Max articles per ticker (default 20).
+        lookback_days: How many days back to fetch (default 1).
+        
+    Returns:
+        Preprocessed list of article dicts, deduplicated and noise-filtered.
+    """
     symbols = [s.strip().upper() for s in query.split(",") if s.strip()]
     if not symbols:
         # Fall back to DEFAULT_TICKERS from config (can be set via
@@ -153,7 +284,7 @@ def fetch_data(query: str = "", limit: int = 20) -> list[dict]:
                 "Provide at least one ticker symbol (e.g. 'AAPL,MSFT') "
                 "or set ALPHA_DIGEST_TICKERS environment variable."
             )
-    return fetch_news_for_tickers(symbols, limit_per_ticker=limit)
+    return fetch_news_for_tickers(symbols, limit_per_ticker=limit, lookback_days=lookback_days)
 
 
 def format_data_for_llm(data: list[dict]) -> str:
