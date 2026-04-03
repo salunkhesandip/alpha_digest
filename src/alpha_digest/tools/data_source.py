@@ -235,6 +235,50 @@ _TICKER_NAMES: dict[str, list[str]] = {
     "SNOW": ["snowflake"],
     "NET": ["cloudflare"],
     "DDOG": ["datadog"],
+    # Additional tickers - pharmaceuticals & biotech
+    "TEVA": ["teva pharmaceutical"],
+    "BMY": ["bristol myers squibb"],
+    "MRNA": ["moderna"],
+    "KVUE": ["kenvue"],
+    # Additional tickers - energy & utilities
+    "PLUG": ["plug power"],
+    "RIVN": ["rivian"],
+    "EVRG": ["evercore"],
+    "TU": ["tourmaline oil"],
+    # Additional tickers - retail & consumer
+    "M": ["macys", "macy"],
+    "AEO": ["american eagle"],
+    "KSS": ["kohls"],
+    "CHWY": ["chewy"],
+    "ABEV": ["ambev"],
+    "CVS": ["cvs health"],
+    "KHC": ["kraft heinz"],
+    # Additional tickers - telecom & media
+    "ERIC": ["ericsson"],
+    "RCI": ["rogers communications"],
+    "BCE": ["bell canada"],
+    "CMCSA": ["comcast"],
+    "TELFY": ["telefonica"],
+    # Additional tickers - technology & software
+    "PATH": ["uipath"],
+    "SNAP": ["snapchat"],
+    "YEXT": ["yext"],
+    "TDOC": ["teladoc"],
+    # Additional tickers - industrial & automotive
+    "HMC": ["honda"],
+    "STLA": ["stellantis"],
+    # Additional tickers - finance & payments
+    "BAC": ["bank of america"],
+    "PAYX": ["paychex"],
+    # Additional tickers - semiconductors & electronics
+    "INTC": ["intel"],
+    "SEDG": ["solaredge"],
+    "CSIQ": ["canadian solar"],
+    "HPQ": ["hp inc"],
+    "PHG": ["philips"],
+    # Additional tickers - travel & leisure
+    "LYFT": ["lyft"],
+    "TRIP": ["tripadvisor"],
 }
 
 
@@ -432,14 +476,13 @@ def fetch_data(query: str = "", limit: int = 20, lookback_days: int = 1) -> list
     """
     symbols = [s.strip().upper() for s in query.split(",") if s.strip()]
     if not symbols:
-        # Fall back to DEFAULT_TICKERS from config (can be set via
-        # ALPHA_DIGEST_TICKERS environment variable). If still empty, raise.
+        # Fall back to DEFAULT_TICKERS from config. If still empty, raise.
         if DEFAULT_TICKERS:
             symbols = DEFAULT_TICKERS
         else:
             raise ValueError(
                 "Provide at least one ticker symbol (e.g. 'AAPL,MSFT') "
-                "or set ALPHA_DIGEST_TICKERS environment variable."
+                "or populate DEFAULT_TICKERS in src/alpha_digest/config.py."
             )
     return fetch_news_for_tickers(symbols, limit_per_ticker=limit, lookback_days=lookback_days)
 

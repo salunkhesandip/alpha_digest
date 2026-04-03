@@ -66,9 +66,8 @@ def parse_tickers_node(state: AgentState) -> dict:
     query = state.get("query", "")
     tickers = [t.strip().upper() for t in query.split(",") if t.strip()]
     if not tickers:
-        # Fall back to DEFAULT_TICKERS from config (set via
-        # ALPHA_DIGEST_TICKERS environment variable). If still empty,
-        # return an error as before.
+        # Fall back to DEFAULT_TICKERS from config. If still empty, return an
+        # error as before.
         if DEFAULT_TICKERS:
             logger.info(
                 "parse_tickers_node: no query provided, falling back to DEFAULT_TICKERS: %s",

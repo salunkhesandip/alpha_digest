@@ -47,6 +47,8 @@ A LangGraph AI agent for Stock Market Analysis
 	uv run python main.py --query "your input here"
 	```
 
+If you run without `--query` or `--tickers`, the agent uses the watchlist in `DEFAULT_TICKERS` inside `src/alpha_digest/config.py`.
+
 For installation, environment configuration, and run commands, see [SETUP.md](SETUP.md).
 
 ## Project Structure
@@ -78,4 +80,4 @@ Customize `SYSTEM_PROMPT` and `SUMMARY_PROMPT_TEMPLATE` for your specific domain
 Add new nodes, modify the workflow, or add conditional edges to the LangGraph pipeline.
 
 ### 5. Configuration (`config.py`)
-Adjust limits, timeouts, retry settings, and other constants.
+Adjust limits, timeouts, retry settings, and the `DEFAULT_TICKERS` watchlist.
