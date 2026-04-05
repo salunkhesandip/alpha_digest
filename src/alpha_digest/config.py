@@ -59,7 +59,7 @@ MISSING_API_KEY_ERROR = (
 # ── Finnhub ───────────────────────────────────────────────────────────────
 FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
 DEFAULT_LOOKBACK_DAYS = 1
-DEFAULT_NEWS_PER_TICKER = 20
+DEFAULT_NEWS_PER_TICKER = 30
 
 # Relevance filtering — Finnhub's "related" field is very broad, so many
 # returned articles are only tangentially related to the queried ticker.
@@ -67,10 +67,57 @@ DEFAULT_NEWS_PER_TICKER = 20
 MIN_RELEVANCE_SCORE = float(os.getenv("ALPHA_DIGEST_MIN_RELEVANCE", "0.15"))
 
 # Ticker list configuration
-# Supply a comma-separated list via the ALPHA_DIGEST_TICKERS environment variable,
-# e.g. ALPHA_DIGEST_TICKERS="AAPL,MSFT,GOOGL"
-_tickers_env = os.getenv("ALPHA_DIGEST_TICKERS") or os.getenv("TICKERS")
-if _tickers_env:
-    DEFAULT_TICKERS = [t.strip().upper() for t in _tickers_env.split(",") if t.strip()]
-else:
-    DEFAULT_TICKERS: list[str] = []
+# Edit this list directly to change the default watchlist used when no
+# --tickers/--query argument is provided.
+DEFAULT_TICKERS: list[str] = [
+    # Magnificent 7 stocks
+    "AAPL",
+    "MSFT",
+    "GOOGL",
+    "AMZN",
+    "NVDA",
+    "TSLA",
+    "META",
+    # Additional tickers
+    "TEVA",
+    "SEDG",
+    "INTC",
+    "M",
+    "PHG",
+    "T",
+    "ERIC",
+    "BAC",
+    "CSIQ",
+    "CVS",
+    "RIVN",
+    "AEO",
+    "RCI",
+    "PLUG",
+    "KVUE",
+    "BMY",
+    "ABEV",
+    "HPQ",
+    "TELFY",
+    "BCE",
+    "KSS",
+    "PFE",
+    "STLA",
+    "TU",
+    "LYFT",
+    "TRIP",
+    "CMCSA",
+    "YEXT",
+    "KHC",
+    "TDOC",
+    "GRFS",
+    "SNAP",
+    "PAYX",
+    "CHWY",
+    "MRNA",
+    "EVRG",
+    "PATH",
+    "HMC",
+    "VSNT",
+    "FIG",
+    "AVTR",
+]

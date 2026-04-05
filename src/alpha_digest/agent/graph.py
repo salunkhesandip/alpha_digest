@@ -66,9 +66,8 @@ def parse_tickers_node(state: AgentState) -> dict:
     query = state.get("query", "")
     tickers = [t.strip().upper() for t in query.split(",") if t.strip()]
     if not tickers:
-        # Fall back to DEFAULT_TICKERS from config (set via
-        # ALPHA_DIGEST_TICKERS environment variable). If still empty,
-        # return an error as before.
+        # Fall back to DEFAULT_TICKERS from config. If still empty, return an
+        # error as before.
         if DEFAULT_TICKERS:
             logger.info(
                 "parse_tickers_node: no query provided, falling back to DEFAULT_TICKERS: %s",
@@ -104,12 +103,23 @@ def fetch_data_node(state: AgentState) -> dict:
 def format_data_node(state: AgentState) -> dict:
     """Format news articles for LLM processing."""
     try:
-        raw_text = format_data_for_llm(state.get("data", []))
+        data = state.get("data", [])
+        raw_text = format_data_for_llm(data)
+
+        # Log which tickers actually have articles going to the LLM
+        from collections import Counter
+        sym_counts = Counter(art.get("symbol", "?") for art in data)
+        tickers_with_data = [sym for sym, _ in sym_counts.most_common()]
         logger.info(
-            "format_data_node: formatted text length = %d chars",
+            "format_data_node: %d chars, %d articles across %d tickers: %s",
             len(raw_text),
+            len(data),
+            len(tickers_with_data),
+            ", ".join(f"{s}({c})" for s, c in sym_counts.most_common()),
         )
-        return {"raw_text": raw_text}
+
+        # Narrow allowed_tickers to only those with actual data
+        return {"raw_text": raw_text, "tickers_with_data": tickers_with_data}
     except Exception as e:
         logger.error("format_data_node failed: %s", e)
         return {"error": f"Failed to format data: {e}"}
@@ -120,12 +130,18 @@ async def process_node(state: AgentState) -> dict:
     try:
         raw_text = state.get("raw_text")
         tickers = state.get("tickers", [])
+        tickers_with_data = state.get("tickers_with_data", tickers)
         if not raw_text:
             return {"error": "No content to process"}
-        if not tickers:
-            return {"error": "No ticker symbols available for summarization"}
+        if not tickers_with_data:
+            return {"error": "No ticker symbols with data available for summarization"}
 
         llm = _get_llm()
+        logger.info(
+            "process_node: summarizing %d tickers with data: %s",
+            len(tickers_with_data),
+            ", ".join(tickers_with_data),
+        )
 
         # ── Split into article blocks ────────────────────────────────
         lines = raw_text.split("\n")
@@ -141,7 +157,7 @@ async def process_node(state: AgentState) -> dict:
 
         if len(blocks) <= CHUNK_SIZE:
             # Single call – fits within context window
-            prompt = get_summary_prompt(raw_text, allowed_tickers=tickers)
+            prompt = get_summary_prompt(raw_text, allowed_tickers=tickers_with_data)
             response = await llm.ainvoke([HumanMessage(content=prompt)])
             summary = response.content
         else:
@@ -156,7 +172,7 @@ async def process_node(state: AgentState) -> dict:
             chunk_prompts = [
                 get_summary_prompt(
                     "\n".join(blocks[start : start + CHUNK_SIZE]),
-                    allowed_tickers=tickers,
+                    allowed_tickers=tickers_with_data,
                 )
                 for start in range(0, len(blocks), CHUNK_SIZE)
             ]
@@ -167,7 +183,7 @@ async def process_node(state: AgentState) -> dict:
 
             merge_prompt = get_chunk_merge_prompt(
                 partial_summaries,
-                allowed_tickers=tickers,
+                allowed_tickers=tickers_with_data,
             )
             merged = await llm.ainvoke([HumanMessage(content=merge_prompt)])
             summary = merged.content
@@ -261,7 +277,7 @@ async def run_agent(
             response[RESP_SUMMARY], tickers_str, None  # No audio attachment
         ))
         telegram_task = asyncio.create_task(_safe_telegram(
-            response[RESP_SUMMARY], audio_path,  # MP3 only to Telegram
+            audio_path,  # MP3 only to Telegram
         ))
 
         response[RESP_EMAIL_STATUS] = await email_task
@@ -302,20 +318,10 @@ async def _safe_email(summary: str, tickers: str, audio_path: Optional[str]) -> 
         return f"failed: {e}"
 
 
-async def _safe_telegram(summary: str, audio_path: Optional[str]) -> str:
+async def _safe_telegram(audio_path: Optional[str]) -> str:
     """Send TTS audio to Telegram, returning status string instead of raising."""
     try:
-        thematic_overview = _extract_thematic_overview(summary)
-        return await send_summary_to_telegram(audio_path, thematic_overview)
+        return await send_summary_to_telegram(audio_path)
     except Exception as e:
         logger.error("Telegram send failed: %s", e)
         return f"failed: {e}"
-
-
-def _extract_thematic_overview(summary: str) -> Optional[str]:
-    """Extract first non-header line from summary as a caption."""
-    for line in summary.split("\n"):
-        line = line.strip()
-        if line and not line.startswith("**") and not line.startswith("#"):
-            return line
-    return None

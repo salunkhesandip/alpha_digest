@@ -36,7 +36,7 @@ Hard rules:
 - Only create top-level sections for these ticker symbols: {allowed_tickers}
 - Do not create separate sections for any other company, stock, ETF, or asset.
 - If another company is mentioned in an article, discuss it only within the section of the requested ticker whose news item included it.
-- If a requested ticker has no meaningful news, OMIT it entirely from the summary (do not write a "no material news" section).
+- If a requested ticker has no meaningful news (articles don't directly address its operations, performance, or strategy), OMIT it entirely from the summary.
 - Write each ticker section label using bold text only, not ### headings.
 
 === STOCK NEWS TO ANALYZE ===
@@ -60,7 +60,7 @@ Merge them into a single cohesive financial digest that:
 4. Uses only these ticker sections: {allowed_tickers}
 5. Does not create any section for unrequested companies or symbols
 6. Formats each ticker section label as bold text like **AAPL**, not ### AAPL
-7. OMITS any ticker that has no material news or articles — do not include sections like "No material news was found for X"
+7. OMITS any ticker that has no meaningful news or articles — do not include "no material news" sections
 
 Partial summaries:
 {partial_summaries}

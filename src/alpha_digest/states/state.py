@@ -26,6 +26,9 @@ class AgentState(TypedDict, total=False):
     # Formatted text representation for LLM processing
     raw_text: Optional[str]
 
+    # Tickers that actually have article data (subset of tickers)
+    tickers_with_data: list[str]
+
     # Generated summary or output from LLM processing
     summary: Optional[str]
 
