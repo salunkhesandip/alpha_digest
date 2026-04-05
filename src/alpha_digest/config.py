@@ -59,7 +59,7 @@ MISSING_API_KEY_ERROR = (
 # ── Finnhub ───────────────────────────────────────────────────────────────
 FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
 DEFAULT_LOOKBACK_DAYS = 1
-DEFAULT_NEWS_PER_TICKER = 20
+DEFAULT_NEWS_PER_TICKER = 30
 
 # Relevance filtering — Finnhub's "related" field is very broad, so many
 # returned articles are only tangentially related to the queried ticker.

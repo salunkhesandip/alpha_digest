@@ -260,7 +260,7 @@ async def run_agent(
             response[RESP_SUMMARY], tickers_str, None  # No audio attachment
         ))
         telegram_task = asyncio.create_task(_safe_telegram(
-            response[RESP_SUMMARY], audio_path,  # MP3 only to Telegram
+            audio_path,  # MP3 only to Telegram
         ))
 
         response[RESP_EMAIL_STATUS] = await email_task
@@ -301,20 +301,10 @@ async def _safe_email(summary: str, tickers: str, audio_path: Optional[str]) -> 
         return f"failed: {e}"
 
 
-async def _safe_telegram(summary: str, audio_path: Optional[str]) -> str:
+async def _safe_telegram(audio_path: Optional[str]) -> str:
     """Send TTS audio to Telegram, returning status string instead of raising."""
     try:
-        thematic_overview = _extract_thematic_overview(summary)
-        return await send_summary_to_telegram(audio_path, thematic_overview)
+        return await send_summary_to_telegram(audio_path)
     except Exception as e:
         logger.error("Telegram send failed: %s", e)
         return f"failed: {e}"
-
-
-def _extract_thematic_overview(summary: str) -> Optional[str]:
-    """Extract first non-header line from summary as a caption."""
-    for line in summary.split("\n"):
-        line = line.strip()
-        if line and not line.startswith("**") and not line.startswith("#"):
-            return line
-    return None

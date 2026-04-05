@@ -9,7 +9,7 @@ from src.alpha_digest.config import logger
 
 
 async def send_summary_to_telegram(
-    audio_path: str | None = None, thematic_overview: str | None = None
+    audio_path: str | None = None,
 ) -> str:
     """Send MP3 audio to a Telegram chat.
 
@@ -19,7 +19,6 @@ async def send_summary_to_telegram(
 
     Args:
         audio_path: Optional path to an MP3 file to send
-        thematic_overview: Optional one-sentence overview for the caption
 
     Returns:
         Status string: "sent", "skipped", or error message
@@ -34,7 +33,7 @@ async def send_summary_to_telegram(
 
     if audio_path and os.path.exists(audio_path):
         day_date = datetime.datetime.now().strftime("%A, %d %B %Y")
-        caption = thematic_overview if thematic_overview else day_date
+        caption = f"Alpha Digest - {day_date}"
         caption = caption[:1024]  # Telegram caption limit
         with open(audio_path, "rb") as audio:
             await bot.send_audio(

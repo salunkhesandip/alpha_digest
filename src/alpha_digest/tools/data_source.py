@@ -1,7 +1,9 @@
 """Data source tools — Finnhub company-news integration."""
 
 import time
+import re
 from datetime import datetime, timedelta, timezone
+from collections import Counter
 
 import requests
 import difflib
@@ -286,8 +288,8 @@ def _relevance_score(article: dict, ticker: str) -> float:
     """Score how relevant *article* is to *ticker* (0.0 → 1.0).
 
     Scoring heuristic:
-      +0.50  ticker symbol appears in headline
-      +0.20  ticker symbol appears in summary
+      +0.50  ticker symbol appears in headline (as whole word/token)
+      +0.20  ticker symbol appears in summary (as whole word/token)
       +0.40  company name appears in headline
       +0.15  company name appears in summary
       +0.10  none of the above (article only has 'related' tag)
@@ -297,10 +299,12 @@ def _relevance_score(article: dict, ticker: str) -> float:
     ticker_lower = ticker.lower()
     score = 0.0
 
-    # Ticker symbol mentions
-    if ticker_lower in headline:
+    # Ticker symbol mentions — use word boundary to avoid false matches
+    # on single-letter tickers like T (would otherwise match "stock", "that", etc.)
+    ticker_pattern = r'\b' + re.escape(ticker_lower) + r'\b'
+    if re.search(ticker_pattern, headline):
         score += 0.50
-    if ticker_lower in summary:
+    if re.search(ticker_pattern, summary):
         score += 0.20
 
     # Company name mentions (first match wins per field)
@@ -457,7 +461,35 @@ def fetch_news_for_tickers(
             logger.error("Failed to fetch news for %s: %s", sym, exc)
 
     # Preprocess combined articles to remove noise/duplicates before returning
+    initial_total = len(all_articles)
+    initial_by_sym: Counter = Counter([art.get("symbol", "UNKNOWN") for art in all_articles])
+    if initial_total:
+        logger.info(
+            "Preprocessing will run on %d articles across %d symbols",
+            initial_total,
+            len(initial_by_sym),
+        )
+        for sym, cnt in initial_by_sym.most_common():
+            logger.info("  preproc pre-count: %s -> %d", sym, cnt)
+
     all_articles = preprocess_articles(all_articles)
+
+    # Post-processing per-symbol summary
+    final_total = len(all_articles)
+    final_by_sym: Counter = Counter([art.get("symbol", "UNKNOWN") for art in all_articles])
+    logger.info(
+        "Preprocessing completed: %d -> %d articles (removed %d)",
+        initial_total,
+        final_total,
+        initial_total - final_total,
+    )
+    for sym, init_cnt in initial_by_sym.items():
+        final_cnt = final_by_sym.get(sym, 0)
+        if init_cnt != final_cnt:
+            logger.info("    %s: %d -> %d (removed %d)", sym, init_cnt, final_cnt, init_cnt - final_cnt)
+        else:
+            logger.debug("    %s: %d (no change)", sym, init_cnt)
+
     return all_articles
 
 
