@@ -350,12 +350,18 @@ def filter_by_relevance(
     # Sort: highest relevance first, then most recent first
     scored.sort(key=lambda pair: (pair[0], pair[1].get("datetime", 0)), reverse=True)
 
-    if removed:
+    kept_articles = [art for _, art in scored]
+    if scored or removed:
         logger.info(
             "Relevance filter (%s): kept %d, removed %d (threshold %.2f)",
             ticker, len(scored), removed, threshold,
         )
-    return [art for _, art in scored]
+        for s, art in scored:
+            logger.debug(
+                "  (%s) score=%.2f | %s",
+                ticker, s, (art.get("headline") or "")[:80],
+            )
+    return kept_articles
 
 
 # ── Retry helper ─────────────────────────────────────────────────────────
@@ -455,10 +461,17 @@ def fetch_news_for_tickers(
             articles = filter_by_relevance(articles, sym)
 
             _set_cache(cache_key, articles)
-            logger.info("Fetched %d articles for %s", len(articles), sym)
+            if articles:
+                logger.info("Fetched %d articles for %s", len(articles), sym)
             all_articles.extend(articles)
         except Exception as exc:
             logger.error("Failed to fetch news for %s: %s", sym, exc)
+
+    # Log summary of zero-article tickers in one line
+    zero_syms = [s for s in symbols if s.strip().upper() not in
+                 {art.get("symbol", "") for art in all_articles}]
+    if zero_syms:
+        logger.info("No articles found for %d tickers: %s", len(zero_syms), ", ".join(zero_syms))
 
     # Preprocess combined articles to remove noise/duplicates before returning
     initial_total = len(all_articles)
