@@ -117,7 +117,6 @@ DEFAULT_TICKERS: list[str] = [
     "EVRG",
     "PATH",
     "HMC",
-    "FTEC",
     "VSNT",
     "FIG",
     "AVTR",
