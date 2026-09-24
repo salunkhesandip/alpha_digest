@@ -6,7 +6,7 @@ keys that changed).  LangGraph merges them back automatically.
 
 import asyncio
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -57,6 +57,43 @@ def _get_llm() -> ChatGoogleGenerativeAI:
             google_api_key=api_key,
         )
     return _llm_instance
+
+
+_RETRYABLE_CODES = ("503", "429", "UNAVAILABLE", "rate limit", "quota")
+
+_LLM_MAX_ATTEMPTS = 5
+_LLM_BASE_WAIT = 30   # seconds – start higher since the built-in SDK retries already ran
+_LLM_MAX_WAIT = 120   # seconds
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return any(code.lower() in msg for code in _RETRYABLE_CODES)
+
+
+async def _invoke_llm(messages: List) -> Any:
+    """Invoke the LLM with application-level exponential-backoff retry.
+
+    The underlying google_genai SDK already performs ~5 short retries before
+    raising.  This layer adds further attempts with longer waits so that a
+    temporary capacity spike does not kill the entire run.
+    """
+    llm = _get_llm()
+    for attempt in range(1, _LLM_MAX_ATTEMPTS + 1):
+        try:
+            return await llm.ainvoke(messages)
+        except Exception as exc:
+            if attempt == _LLM_MAX_ATTEMPTS or not _is_retryable(exc):
+                raise
+            wait = min(_LLM_BASE_WAIT * (2 ** (attempt - 1)), _LLM_MAX_WAIT)
+            logger.warning(
+                "_invoke_llm: attempt %d/%d failed (%s). Retrying in %ds…",
+                attempt,
+                _LLM_MAX_ATTEMPTS,
+                exc,
+                wait,
+            )
+            await asyncio.sleep(wait)
 
 
 # ── Graph nodes ──────────────────────────────────────────────────────────
@@ -136,7 +173,6 @@ async def process_node(state: AgentState) -> dict:
         if not tickers_with_data:
             return {"error": "No ticker symbols with data available for summarization"}
 
-        llm = _get_llm()
         logger.info(
             "process_node: summarizing %d tickers with data: %s",
             len(tickers_with_data),
@@ -158,7 +194,7 @@ async def process_node(state: AgentState) -> dict:
         if len(blocks) <= CHUNK_SIZE:
             # Single call – fits within context window
             prompt = get_summary_prompt(raw_text, allowed_tickers=tickers_with_data)
-            response = await llm.ainvoke([HumanMessage(content=prompt)])
+            response = await _invoke_llm([HumanMessage(content=prompt)])
             summary = response.content
         else:
             # Parallel chunk calls → single merge call
@@ -177,7 +213,7 @@ async def process_node(state: AgentState) -> dict:
                 for start in range(0, len(blocks), CHUNK_SIZE)
             ]
             chunk_responses = await asyncio.gather(
-                *[llm.ainvoke([HumanMessage(content=p)]) for p in chunk_prompts]
+                *[_invoke_llm([HumanMessage(content=p)]) for p in chunk_prompts]
             )
             partial_summaries = [r.content for r in chunk_responses]
 
@@ -185,7 +221,7 @@ async def process_node(state: AgentState) -> dict:
                 partial_summaries,
                 allowed_tickers=tickers_with_data,
             )
-            merged = await llm.ainvoke([HumanMessage(content=merge_prompt)])
+            merged = await _invoke_llm([HumanMessage(content=merge_prompt)])
             summary = merged.content
 
         logger.info("process_node: summary generated (%d chars)", len(summary))
