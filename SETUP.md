@@ -74,6 +74,7 @@ Open `.env` in your editor and fill in required credentials:
 **Required:**
 
 - `GOOGLE_API_KEY`: Get from [Google AI Studio](https://makersuite.google.com/app/apikey)
+- Default tickers come from `DEFAULT_TICKERS` in `src/alpha_digest/config.py`
 
 **Optional:**
 
