@@ -68,4 +68,12 @@ _tickers_env = os.getenv("ALPHA_DIGEST_TICKERS") or os.getenv("TICKERS")
 if _tickers_env:
     DEFAULT_TICKERS = [t.strip().upper() for t in _tickers_env.split(",") if t.strip()]
 else:
-    DEFAULT_TICKERS: list[str] = []
+    DEFAULT_TICKERS: list[str] = [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META",
+        "TEVA", "SEDG", "INTC", "M", "PHG", "T", "ERIC", "BAC",
+        "CSIQ", "CVS", "RIVN", "AEO", "RCI", "PLUG", "KVUE", "BMY",
+        "ABEV", "HPQ", "TELFY", "BCE", "KSS", "PFE", "STLA", "TU",
+        "LYFT", "TRIP", "CMCSA", "YEXT", "KHC", "TDOC", "GRFS",
+        "SNAP", "PAYX", "CHWY", "MRNA", "EVRG", "PATH", "HMC",
+        "VSNT", "FIG", "AVTR",
+    ]

@@ -10,43 +10,43 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     # Core LangGraph ecosystem
-    "langgraph>=1.0.8",
-    "langgraph-api>=0.6.39",
-    "langgraph-cli>=0.4.11",
-    "langsmith>=0.5.2",
+    "langgraph>=1.2.12",
+    "langgraph-api>=0.14.4",
+    "langgraph-cli>=0.4.32",
+    "langsmith>=0.14.0",
 
     # Core LangChain components
-    "langchain-core>=1.2.5",
-    "langchain>=1.2.0",
-    "langchain-google-genai>=0.0.1",
+    "langchain-core>=1.6.4",
+    "langchain>=1.4.2",
+    "langchain-google-genai>=4.4.0",
 
-    "pydantic>=2.0",
-    "typing-extensions>=4.0",
-    "python-dotenv>=1.0.0",
-    "requests>=2.31.0",
+    "pydantic>=2.13.5",
+    "typing-extensions>=4.16.0",
+    "python-dotenv>=1.2.3",
+    "requests>=2.34.2",
 
     # Gmail OAuth
-    "google-api-python-client>=2.190.0",
-    "google-auth-httplib2>=0.2.0",
-    "google-auth-oauthlib>=1.2.0",
+    "google-api-python-client>=2.200.0",
+    "google-auth-httplib2>=0.4.2",
+    "google-auth-oauthlib>=1.4.1",
 
     # Text-to-Speech & Telegram
-    "edge-tts>=7.0.0",
-    "python-telegram-bot>=20.0",
+    "edge-tts>=7.2.8",
+    "python-telegram-bot>=22.8",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0",
-    "pytest-asyncio>=0.21.0",
-    "black>=23.0",
-    "isort>=5.0",
-    "mypy>=1.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "black>=26.5.1",
+    "isort>=9.0.1",
+    "mypy>=2.3.1",
 ]
 
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
 testpaths = ["src/alpha_digest/tests"]
+pythonpath = ["src"]
 
 [tool.isort]
 profile = "black"

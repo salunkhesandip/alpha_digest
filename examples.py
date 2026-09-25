@@ -4,8 +4,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from src.alpha_digest.agent import create_agent_graph
-from src.alpha_digest.states import AgentState
+from alpha_digest.agent import create_agent_graph
+from alpha_digest.states import AgentState
 
 
 def example_basic_usage():

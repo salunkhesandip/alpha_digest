@@ -12,17 +12,17 @@ from langchain_core.messages import HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, StateGraph
 
-from src.alpha_digest.config import (
+from alpha_digest.config import (
     CHUNK_SIZE,
     DEFAULT_LOOKBACK_DAYS,
     DEFAULT_NEWS_PER_TICKER,
     DEFAULT_TICKERS,
     logger,
 )
-from src.alpha_digest.prompts import get_summary_prompt, get_chunk_merge_prompt
-from src.alpha_digest.states import AgentState
-from src.alpha_digest.tools import fetch_news_for_tickers, format_data_for_llm
-from src.alpha_digest.utils import (
+from alpha_digest.prompts import get_summary_prompt, get_chunk_merge_prompt
+from alpha_digest.states import AgentState
+from alpha_digest.tools import fetch_news_for_tickers, format_data_for_llm
+from alpha_digest.utils import (
     get_api_key,
     generate_summary_audio,
     send_summary_email_oauth,

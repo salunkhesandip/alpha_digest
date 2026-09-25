@@ -47,6 +47,8 @@ A LangGraph AI agent for Stock Market Analysis
 	uv run python main.py --query "your input here"
 	```
 
+If you run without `--query` or `--tickers`, the agent uses the built-in default watchlist in `src/alpha_digest/config.py`. Override it with `ALPHA_DIGEST_TICKERS`.
+
 For installation, environment configuration, and run commands, see [SETUP.md](SETUP.md).
 
 ## Project Structure

@@ -1,8 +1,8 @@
 """Tests for the alpha_digest agent."""
 
 import pytest
-from src.alpha_digest.states import AgentState
-from src.alpha_digest.tools import format_data_for_llm
+from alpha_digest.states import AgentState
+from alpha_digest.tools import format_data_for_llm
 
 
 @pytest.fixture
@@ -28,15 +28,16 @@ def test_format_data_for_llm(sample_data):
     """Test formatting data for LLM."""
     formatted = format_data_for_llm(sample_data)
 
-    assert "Data Items" in formatted
-    assert "First Item" in formatted
-    assert "Second Item" in formatted
+    assert "Stock Market News" in formatted
+    assert "Ticker: UNKNOWN" in formatted
+    assert formatted.count("Headline: No headline") == 2
+    assert formatted.count("Source:   Unknown source") == 2
 
 
 def test_format_empty_data():
     """Test formatting empty data list."""
     formatted = format_data_for_llm([])
-    assert "No data found" in formatted
+    assert "No news articles found for the requested tickers." in formatted
 
 
 def test_agent_state():

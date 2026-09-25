@@ -11,9 +11,9 @@ load_dotenv()
 import time
 import logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
-from src.alpha_digest.config import logger
+from alpha_digest.config import logger
 logger.info(f"Program started at {time.strftime('%Y-%m-%d %H:%M:%S')}")
-from src.alpha_digest.agent import run_agent
+from alpha_digest.agent import run_agent
 
 
 async def main(tickers: Optional[str] = None) -> None:

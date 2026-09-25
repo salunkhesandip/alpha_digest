@@ -5,7 +5,7 @@ import datetime
 
 from telegram import Bot
 
-from src.alpha_digest.config import logger
+from alpha_digest.config import logger
 
 
 async def send_summary_to_telegram(

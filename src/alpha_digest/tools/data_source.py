@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-from src.alpha_digest.config import (
+from alpha_digest.config import (
     API_TIMEOUT,
     CACHE_TTL,
     FINNHUB_BASE_URL,
@@ -14,7 +14,7 @@ from src.alpha_digest.config import (
     RETRY_BACKOFF_BASE,
     logger,
 )
-from src.alpha_digest.utils import get_finnhub_api_key
+from alpha_digest.utils import get_finnhub_api_key
 
 
 # ── Simple in-memory cache ──────────────────────────────────────────────
