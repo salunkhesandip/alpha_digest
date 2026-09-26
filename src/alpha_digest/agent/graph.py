@@ -14,6 +14,7 @@ from langgraph.graph import END, StateGraph
 
 from alpha_digest.config import (
     CHUNK_SIZE,
+    DEFAULT_LLM_MODEL,
     DEFAULT_LOOKBACK_DAYS,
     DEFAULT_NEWS_PER_TICKER,
     DEFAULT_TICKERS,
@@ -52,7 +53,7 @@ def _get_llm() -> ChatGoogleGenerativeAI:
     if _llm_instance is None:
         api_key = get_api_key()
         _llm_instance = ChatGoogleGenerativeAI(
-            model="models/gemini-3.8-flash",
+            model=DEFAULT_LLM_MODEL,
             temperature=0.7,
             google_api_key=api_key,
         )
@@ -69,6 +70,31 @@ _LLM_MAX_WAIT = 120   # seconds
 def _is_retryable(exc: BaseException) -> bool:
     msg = str(exc).lower()
     return any(code.lower() in msg for code in _RETRYABLE_CODES)
+
+
+def _llm_content_to_text(content: Any) -> str:
+    """Convert provider-specific structured content into plain text."""
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str) and text:
+                    parts.append(text)
+                else:
+                    parts.append(str(item))
+            else:
+                parts.append(str(item))
+        return "\n".join(part for part in parts if part)
+
+    if content is None:
+        return ""
+    return str(content)
 
 
 async def _invoke_llm(messages: List) -> Any:
@@ -195,7 +221,7 @@ async def process_node(state: AgentState) -> dict:
             # Single call – fits within context window
             prompt = get_summary_prompt(raw_text, allowed_tickers=tickers_with_data)
             response = await _invoke_llm([HumanMessage(content=prompt)])
-            summary = response.content
+            summary = _llm_content_to_text(response.content)
         else:
             # Parallel chunk calls → single merge call
             num_chunks = (len(blocks) + CHUNK_SIZE - 1) // CHUNK_SIZE
@@ -215,14 +241,14 @@ async def process_node(state: AgentState) -> dict:
             chunk_responses = await asyncio.gather(
                 *[_invoke_llm([HumanMessage(content=p)]) for p in chunk_prompts]
             )
-            partial_summaries = [r.content for r in chunk_responses]
+            partial_summaries = [_llm_content_to_text(r.content) for r in chunk_responses]
 
             merge_prompt = get_chunk_merge_prompt(
                 partial_summaries,
                 allowed_tickers=tickers_with_data,
             )
             merged = await _invoke_llm([HumanMessage(content=merge_prompt)])
-            summary = merged.content
+            summary = _llm_content_to_text(merged.content)
 
         logger.info("process_node: summary generated (%d chars)", len(summary))
         return {"summary": summary, "raw_text": None}

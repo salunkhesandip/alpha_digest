@@ -28,7 +28,7 @@ logger = logging.getLogger("alpha_digest")
 logging.getLogger("google_genai.models").setLevel(logging.ERROR)
 
 # LLM Configuration
-DEFAULT_LLM_MODEL = "models/gemini-3.8-flash"
+DEFAULT_LLM_MODEL = "models/gemini-3.5-flash"
 DEFAULT_TEMPERATURE = 0.7
 
 # Processing Configuration

@@ -35,7 +35,12 @@ async def main(tickers: Optional[str] = None) -> None:
         logger.info(f"Program ended at {time.strftime('%Y-%m-%d %H:%M:%S')}")
         return
 
-    logger.info("RESULT:\n" + (result.get("summary") or "No summary generated."))
+    summary_text = result.get("summary")
+    if summary_text is None:
+        summary_text = "No summary generated."
+    elif not isinstance(summary_text, str):
+        summary_text = str(summary_text)
+    logger.info("RESULT:\n" + summary_text)
 
     if result.get("email_status"):
         logger.info(f"Email status: {result['email_status']}")
