@@ -12,6 +12,7 @@ SYSTEM_PROMPT = """You are a senior financial analyst AI that summarizes the lat
 3. Identify the most important stories, market-moving events, and sentiment.
 4. Group your analysis by ticker symbol.
 5. For each ticker, highlight:
+   - The current market price and day change, when available, in the ticker label or first sentence
    - Key headlines and their potential market impact
    - Overall sentiment (bullish / bearish / neutral)
    - Any notable patterns across sources
@@ -22,7 +23,8 @@ SYSTEM_PROMPT = """You are a senior financial analyst AI that summarizes the lat
 - Be concise but insightful — target 2–3 paragraphs per ticker.
 - Use plain language; avoid jargon unless essential.
 - Cite specific headlines when referencing a story.
-- Format each ticker label in bold, like **AAPL**.
+- Format each ticker label in bold, like **AAPL** or **AAPL — $220.50 (+1.25%)**.
+- Include the current price and daily change when available, ideally in the ticker label.
 - Do not use Markdown heading syntax like ### AAPL.
 """
 
@@ -37,6 +39,7 @@ Hard rules:
 - Do not create separate sections for any other company, stock, ETF, or asset.
 - If another company is mentioned in an article, discuss it only within the section of the requested ticker whose news item included it.
 - If a requested ticker has no meaningful news (articles don't directly address its operations, performance, or strategy), OMIT it entirely from the summary.
+- Include the current price and day change in the ticker label or first sentence when available, e.g. **RCI — $42.15 (+1.75%)**.
 - Write each ticker section label using bold text only, not ### headings.
 
 === STOCK NEWS TO ANALYZE ===
@@ -59,8 +62,9 @@ Merge them into a single cohesive financial digest that:
 3. Maintains ticker-by-ticker organization
 4. Uses only these ticker sections: {allowed_tickers}
 5. Does not create any section for unrequested companies or symbols
-6. Formats each ticker section label as bold text like **AAPL**, not ### AAPL
-7. OMITS any ticker that has no meaningful news or articles — do not include "no material news" sections
+6. Formats each ticker section label as bold text like **AAPL** or **AAPL — $220.50 (+1.25%)**, not ### AAPL
+7. Includes the current price and day change in the ticker section when available
+8. OMITS any ticker that has no meaningful news or articles — do not include "no material news" sections
 
 Partial summaries:
 {partial_summaries}

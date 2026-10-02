@@ -364,6 +364,33 @@ def filter_by_relevance(
     return kept_articles
 
 
+# ── Stock quote fetcher ─────────────────────────────────────────────────
+
+def _fetch_stock_quote(symbol: str, token: str) -> dict:
+    """GET https://finnhub.io/api/v1/quote for a single ticker."""
+    url = f"{FINNHUB_BASE_URL}/quote"
+    params = {"symbol": symbol, "token": token}
+    resp = requests.get(url, params=params, timeout=API_TIMEOUT)
+    resp.raise_for_status()
+    return resp.json()  # {c, d, dp, h, l, o, pc}
+
+
+def _get_stock_price(symbol: str, token: str) -> dict | None:
+    """Return cached quote data for *symbol*, fetching if needed."""
+    cache_key = _cache_key("quote", symbol, 0)
+    cached = _get_cached(cache_key)
+    if cached is not None:
+        return cached[0] if cached else None
+    try:
+        quote = _retry(_fetch_stock_quote, symbol, token)
+        if quote and quote.get("c"):  # 'c' is 0 when market data unavailable
+            _set_cache(cache_key, [quote])
+            return quote
+    except Exception as exc:
+        logger.warning("Failed to fetch quote for %s: %s", symbol, exc)
+    return None
+
+
 # ── Retry helper ─────────────────────────────────────────────────────────
 def _retry(fn, *args, **kwargs):
     """Call *fn* with exponential back-off on failure."""
@@ -439,6 +466,9 @@ def fetch_news_for_tickers(
             continue
 
         try:
+            # Fetch quote and news concurrently (quote is fast)
+            quote = _get_stock_price(sym, token)
+
             articles = _retry(
                 _fetch_company_news, sym, from_date, to_date, token
             )
@@ -456,6 +486,9 @@ def fetch_news_for_tickers(
                         else [part.strip().upper() for part in str(related).split(",") if part.strip()]
                     )
                 art["symbol"] = sym
+                if quote:
+                    art["_price"] = quote.get("c")
+                    art["_price_change_pct"] = quote.get("dp")
 
             # Filter out articles that aren't actually about this ticker
             articles = filter_by_relevance(articles, sym)
@@ -544,7 +577,14 @@ def format_data_for_llm(data: list[dict]) -> str:
         sym = article.get("symbol", "UNKNOWN")
         if sym != current_symbol:
             current_symbol = sym
-            formatted += f"\n{'=' * 50}\n  Ticker: {sym}\n{'=' * 50}\n\n"
+            price = article.get("_price")
+            change_pct = article.get("_price_change_pct")
+            if price is not None:
+                sign = "+" if (change_pct or 0) >= 0 else ""
+                price_str = f"  ${price:,.2f}  ({sign}{change_pct:.2f}%)"
+            else:
+                price_str = ""
+            formatted += f"\n{'=' * 50}\n  Ticker: {sym}{price_str}\n{'=' * 50}\n\n"
 
         headline = article.get("headline", "No headline")
         source = article.get("source", "Unknown source")
