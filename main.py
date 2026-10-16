@@ -46,6 +46,8 @@ async def main(tickers: Optional[str] = None) -> None:
         logger.info(f"Email status: {result['email_status']}")
     if result.get("telegram_status"):
         logger.info(f"Telegram status: {result['telegram_status']}")
+    if result.get("tts_status"):
+        logger.info(f"TTS status: {result['tts_status']}")
     if result.get("audio_path"):
         logger.info(f"Audio file: {result['audio_path']}")
 

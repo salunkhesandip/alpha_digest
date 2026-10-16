@@ -331,8 +331,12 @@ async def run_agent(
 
     if response.get(RESP_SUMMARY) and not response.get(RESP_ERROR):
         # ── Generate TTS audio first ────────────────────────────────
-        audio_path = await _safe_tts(response[RESP_SUMMARY])
+        audio_path, tts_error = await _safe_tts(response[RESP_SUMMARY])
         response[RESP_AUDIO_PATH] = audio_path
+        if tts_error:
+            response["tts_status"] = f"failed: {tts_error}"
+        else:
+            response["tts_status"] = "sent"
 
         # ── Send email (text only) and Telegram (with MP3) in parallel ─────
         email_task = asyncio.create_task(_safe_email(
@@ -340,6 +344,7 @@ async def run_agent(
         ))
         telegram_task = asyncio.create_task(_safe_telegram(
             audio_path,  # MP3 only to Telegram
+            tts_error,
         ))
 
         response[RESP_EMAIL_STATUS] = await email_task
@@ -359,13 +364,13 @@ async def run_agent(
     return response
 
 
-async def _safe_tts(summary: str) -> Optional[str]:
-    """Generate TTS audio, returning None on failure."""
+async def _safe_tts(summary: str) -> tuple[Optional[str], Optional[str]]:
+    """Generate TTS audio, returning (audio_path, error_message)."""
     try:
-        return await generate_summary_audio(summary)
+        return await generate_summary_audio(summary), None
     except Exception as e:
         logger.error("TTS generation failed: %s", e)
-        return None
+        return None, str(e)
 
 
 async def _safe_email(summary: str, tickers: str, audio_path: Optional[str]) -> str:
@@ -380,9 +385,11 @@ async def _safe_email(summary: str, tickers: str, audio_path: Optional[str]) -> 
         return f"failed: {e}"
 
 
-async def _safe_telegram(audio_path: Optional[str]) -> str:
+async def _safe_telegram(audio_path: Optional[str], tts_error: Optional[str] = None) -> str:
     """Send TTS audio to Telegram, returning status string instead of raising."""
     try:
+        if not audio_path and tts_error:
+            return f"skipped: TTS failed before Telegram send: {tts_error}"
         return await send_summary_to_telegram(audio_path)
     except Exception as e:
         logger.error("Telegram send failed: %s", e)

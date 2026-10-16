@@ -12,4 +12,3 @@ credentials.json
 logs/
 .langgraph_api/
 .venv/
-uv.lock

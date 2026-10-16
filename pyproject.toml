@@ -14,22 +14,18 @@ dependencies = [
     "langgraph-api>=0.14.4",
     "langgraph-cli>=0.4.32",
     "langsmith>=0.14.0",
-
     # Core LangChain components
     "langchain-core>=1.6.4",
     "langchain>=1.4.2",
     "langchain-google-genai>=4.4.0",
-
     "pydantic>=2.13.5",
     "typing-extensions>=4.16.0",
     "python-dotenv>=1.2.3",
     "requests>=2.34.2",
-
     # Gmail OAuth
     "google-api-python-client>=2.200.0",
     "google-auth-httplib2>=0.4.2",
     "google-auth-oauthlib>=1.4.1",
-
     # Text-to-Speech & Telegram
     "edge-tts>=7.2.8",
     "python-telegram-bot>=22.8",
